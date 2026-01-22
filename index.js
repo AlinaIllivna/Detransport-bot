@@ -64,77 +64,109 @@ app.get('/api/ads', async (_req, res) => {
 // --------- Телеграм-бот ---------
 const bot = new Telegraf(BOT_TOKEN);
 
-// простий стейт-машин для діалогу: title -> description -> contacts -> (optional link) -> save
+// Ліміти для красивого дизайну на сайті
+const LIMITS = {
+  title: 60,
+  desc: 200,
+  contact: 120,
+};
+
+// простий стейт-машин
+// steps: title -> desc -> link -> contact -> photo
 const state = new Map();
+
+// допоміжна функція: перевірка URL
+function isValidUrl(text) {
+  return /^https?:\/\/\S+\.\S+/i.test(text);
+}
 
 bot.start(ctx => {
   state.delete(ctx.from.id);
   ctx.reply(
-    '👋 Вітаємо у DeTransport Ads!\nНапишіть, будь ласка, КОРОТКИЙ заголовок реклами (до 150 символів).'
+    `👋 Привіт! Давай оформимо рекламу для сайту DeTransport.\n` +
+    `1/5 ✍️ Напиши короткий заголовок (до ${LIMITS.title} символів).`
   );
 });
 
+bot.command('cancel', ctx => {
+  state.delete(ctx.from.id);
+  ctx.reply('❌ Заявку скасовано. Напиши /start щоб почати заново.');
+});
+
+// текстові повідомлення
 bot.on('text', async ctx => {
   try {
     const uid = ctx.from.id;
     const text = ctx.message.text.trim();
     const s = state.get(uid);
 
+    // Якщо користувач ще не почав
     if (!s) {
-      // крок 1: заголовок
-      if (text.length > 150) {
-        return ctx.reply('Заголовок завеликий. Спробуйте коротше (до 150 символів).');
+      if (text.length > LIMITS.title) {
+        return ctx.reply(`❌ Заголовок занадто довгий. Спробуй коротше (до ${LIMITS.title} символів).`);
       }
+
       state.set(uid, { step: 'title', title: text });
-      return ctx.reply('Дякую! Тепер опишіть рекламне повідомлення (детальний опис).');
+
+      return ctx.reply(`✅ 2/5 📝 Напиши короткий опис (1–2 речення, до ${LIMITS.desc} символів).`);
     }
 
+    // Крок 2 — опис
     if (s.step === 'title') {
-      // крок 2: опис
-      state.set(uid, { ...s, step: 'desc', description: text });
-      return ctx.reply('Добре! Тепер залиште контактні дані (телефон / email / @username).');
-    }
-
-    if (s.step === 'desc') {
-      // крок 3: контакти
-      state.set(uid, { ...s, step: 'contacts', contact_info: text });
-      return ctx.reply('Чудово! Хочете додати посилання "Детальніше/Перейти"? Якщо ні — напишіть "ні".');
-    }
-
-    if (s.step === 'contacts') {
-      // крок 4: посилання (необовʼязково)
-      let link = null;
-      const lower = text.toLowerCase();
-
-      if (lower !== 'ні' && lower !== 'ні.') {
-        link = text;
+      if (text.length > LIMITS.desc) {
+        return ctx.reply(`❌ Опис задовгий. Спробуй коротше (до ${LIMITS.desc} символів).`);
       }
 
-      // збереження в БД (мінімальний набір полів)
-      await pool.query(
-        `INSERT INTO ads_requests
-         (tg_id, name_user, title, description_adv, link_url, media_type, media_url, contact_info, payment_status, status)
-         VALUES (?, ?, ?, ?, ?, 'none', NULL, ?, 'unpaid', 'pending')`,
-        [String(uid), ctx.from.first_name || null, s.title, s.description, link, s.contact_info]
-      );
+      state.set(uid, { ...s, step: 'desc', description: text });
 
-      state.delete(uid);
-
-      return ctx.reply(
-        '✅ Заявку збережено! Можете надіслати фото/логотип одним повідомленням — я додам його до останньої заявки.\nАбо введіть /start, щоб створити нову заявку.'
-      );
+      return ctx.reply('✅ 3/5 🔗 Надішли посилання (URL), куди перейти при натисканні на рекламу.');
     }
+
+    // Крок 3 — посилання
+    if (s.step === 'desc') {
+      if (!isValidUrl(text)) {
+        return ctx.reply('❌ Це не схоже на посилання. Надішли URL (наприклад: https://instagram.com/...)');
+      }
+
+      state.set(uid, { ...s, step: 'link', link_url: text });
+
+      return ctx.reply(`✅ 4/5 ☎️ Залиш контакт (телефон / Instagram / Telegram, до ${LIMITS.contact} символів).`);
+    }
+
+    // Крок 4 — контакт
+    if (s.step === 'link') {
+      if (text.length > LIMITS.contact) {
+        return ctx.reply(`❌ Контакт задовгий. Спробуй коротше (до ${LIMITS.contact} символів).`);
+      }
+
+      state.set(uid, { ...s, step: 'contact', contact_info: text });
+
+      return ctx.reply('✅ 5/5 🖼 Надішли фото/банер одним повідомленням.');
+    }
+
+    // Якщо користувач пише текст замість фото
+    if (s.step === 'contact') {
+      return ctx.reply('📸 Очікую фото/банер. Надішли зображення одним повідомленням 🙂');
+    }
+
   } catch (e) {
     console.error('bot text handler error:', e);
     ctx.reply('На жаль, сталася помилка. Спробуйте ще раз пізніше 🙏');
   }
 });
 
-// медіа: додамо фото до останнього запису користувача
+// Фото/файл — фінальний крок
 bot.on(['photo', 'document'], async ctx => {
   try {
     const uid = ctx.from.id;
+    const s = state.get(uid);
 
+    // Якщо людина не проходила кроки — просимо почати
+    if (!s) {
+      return ctx.reply('Щоб створити рекламу, напиши /start 🙂');
+    }
+
+    // Файл
     let fileId = null;
     if (ctx.message.photo) fileId = ctx.message.photo.at(-1).file_id;
     else if (ctx.message.document) fileId = ctx.message.document.file_id;
@@ -144,22 +176,23 @@ bot.on(['photo', 'document'], async ctx => {
     const file = await ctx.telegram.getFile(fileId);
     const tgUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
 
-    // оновлюємо останній запис цього користувача
-    await pool.query(
-      `UPDATE ads_requests
-       SET media_type = 'photo', media_url = ?
-       WHERE id = (
-         SELECT id FROM (
-           SELECT id FROM ads_requests
-           WHERE tg_id = ?
-           ORDER BY created_at DESC
-           LIMIT 1
-         ) t
-       )`,
-      [tgUrl, String(uid)]
+    // ⚠️ Тут ми тільки готуємо дані.
+    // Запис у БД додамо після того, як ти створиш таблицю.
+    // (Тому зараз просто показуємо підтвердження)
+
+    state.delete(uid);
+
+    return ctx.reply(
+      `🎉 Готово! Заявка прийнята ✅\n` +
+      `Після підтвердження та оплати реклама зʼявиться на сайті.\n\n` +
+      `📌 Дані:\n` +
+      `• Заголовок: ${s.title}\n` +
+      `• Опис: ${s.description}\n` +
+      `• Посилання: ${s.link_url}\n` +
+      `• Контакт: ${s.contact_info}\n` +
+      `• Фото: додано ✅`
     );
 
-    return ctx.reply('🖼 Додав(ла) фото/файл до останньої заявки. Дякую!');
   } catch (e) {
     console.error('bot media handler error:', e);
     ctx.reply('Не вдалося обробити файл. Спробуйте ще раз 🙏');
