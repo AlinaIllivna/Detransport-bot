@@ -1,7 +1,7 @@
-import 'dotenv/config';
-import express from 'express';
-import { Telegraf } from 'telegraf';
-import mysql from 'mysql2/promise';
+import "dotenv/config";
+import express from "express";
+import { Telegraf, Markup } from "telegraf";
+import mysql from "mysql2/promise";
 
 const {
   BOT_TOKEN,
@@ -11,13 +11,14 @@ const {
   MYSQL_PASSWORD,
   MYSQL_DATABASE,
   PORT = 8080,
-  PUBLIC_URL
+  PUBLIC_URL,
+  ADMIN_TG_ID=1379949625, // <-- поставиш свій TG id, щоб адмін команди працювали
 } = process.env;
 
-if (!BOT_TOKEN) throw new Error('BOT_TOKEN відсутній (.env)');
-if (!MYSQL_HOST) throw new Error('MySQL налаштування відсутні (.env)');
+if (!BOT_TOKEN) throw new Error("BOT_TOKEN відсутній (.env)");
+if (!MYSQL_HOST) throw new Error("MySQL налаштування відсутні (.env)");
 
-// Пул підключень до MySQL
+// ----------------- MySQL pool -----------------
 const pool = await mysql.createPool({
   host: MYSQL_HOST,
   port: Number(MYSQL_PORT),
@@ -28,22 +29,23 @@ const pool = await mysql.createPool({
   connectionLimit: 5,
   supportBigNumbers: true,
   bigNumberStrings: true,
-  charset: 'utf8mb4_unicode_ci'
+  charset: "utf8mb4_unicode_ci",
 });
 
-// Перевірка зʼєднання
+// Перевірка підключення (не обовʼязково, але корисно)
 try {
-  const [r] = await pool.query('SELECT NOW() as now');
-  console.log('DB connected, time =', r[0].now);
+  const [r] = await pool.query("SELECT NOW() as now");
+  console.log("DB connected, time =", r[0].now);
 } catch (e) {
-  console.error('DB connection error:', e);
+  console.error("DB connection error:", e);
 }
 
+// ----------------- Express -----------------
 const app = express();
 app.use(express.json());
 
-// API для сайту: віддати активні оголошення в періоді
-app.get('/api/ads', async (_req, res) => {
+// API для сайту: віддати активні оголошення
+app.get("/api/ads", async (_req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT id, title, description_adv, media_url, link_url, contact_info, start_date, end_date, created_at
@@ -56,185 +58,413 @@ app.get('/api/ads', async (_req, res) => {
     );
     res.json(rows);
   } catch (e) {
-    console.error('GET /api/ads error:', e);
-    res.status(500).json({ error: 'Server error' });
+    console.error("GET /api/ads error:", e);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
-// --------- Телеграм-бот ---------
+// ----------------- Telegram bot -----------------
 const bot = new Telegraf(BOT_TOKEN);
 
-// Ліміти для красивого дизайну на сайті
+// Тарифи
+const TARIFFS = [
+  { days: 1, price: 120, label: "✅ 1 день — 120 грн (тест)" },
+  { days: 7, price: 620, label: "✅ 7 днів — 620 грн" },
+  { days: 14, price: 1100, label: "✅ 14 днів — 1100 грн" },
+  { days: 30, price: 2200, label: "✅ 30 днів — 2200 грн" },
+];
+
+// Ліміти тексту
 const LIMITS = {
   title: 60,
   desc: 200,
   contact: 120,
+  name: 60,
 };
 
-// простий стейт-машин
-// steps: title -> desc -> link -> contact -> photo
+// Реквізити (поки тестові)
+const PAYMENT_DETAILS = {
+  card: "5375 4111 2233 4455",
+  iban: "UA12 3456 7890 1234 5678 9012 345",
+};
+
+// Стан діалогу користувача
+// step: menu -> tariff -> title -> desc -> link -> contact -> name -> photo -> wait_receipt
 const state = new Map();
 
-// допоміжна функція: перевірка URL
+// ----------------- helpers -----------------
 function isValidUrl(text) {
   return /^https?:\/\/\S+\.\S+/i.test(text);
 }
 
-bot.start(ctx => {
+function isAdmin(ctx) {
+  if (!ADMIN_TG_ID) return false;
+  return String(ctx.from.id) === String(ADMIN_TG_ID);
+}
+
+function mainMenuKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("📝 Створити заявку", "MENU_CREATE")],
+    [Markup.button.callback("❌ Не зараз", "MENU_LATER")],
+  ]);
+}
+
+function tariffsKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("1 день", "TARIFF_1")],
+    [Markup.button.callback("7 днів", "TARIFF_7")],
+    [Markup.button.callback("14 днів", "TARIFF_14")],
+    [Markup.button.callback("30 днів", "TARIFF_30")],
+    [Markup.button.callback("⬅️ Назад", "BACK_TO_MENU")],
+  ]);
+}
+
+function getTariffByDays(days) {
+  return TARIFFS.find((t) => t.days === days) || null;
+}
+
+// ----------------- /start -----------------
+bot.start(async (ctx) => {
   state.delete(ctx.from.id);
-  ctx.reply(
-    `👋 Привіт! Давай оформимо рекламу для сайту DeTransport.\n` +
-    `1/5 ✍️ Напиши короткий заголовок (до ${LIMITS.title} символів).`
+
+  const tariffsText = TARIFFS.map((t) => t.label).join("\n");
+
+  await ctx.reply(
+    `👋 Вітаємо в DeTransport Ads!\n\n` +
+      `💰 Тарифи розміщення реклами:\n${tariffsText}\n\n` +
+      `Натисніть кнопку нижче 👇`,
+    mainMenuKeyboard()
   );
 });
 
-bot.command('cancel', ctx => {
+// ----------------- /cancel -----------------
+bot.command("cancel", async (ctx) => {
   state.delete(ctx.from.id);
-  ctx.reply('❌ Заявку скасовано. Напиши /start щоб почати заново.');
+  await ctx.reply("❌ Заявку скасовано. Напиши /start щоб почати заново.");
 });
 
-// текстові повідомлення
-bot.on('text', async ctx => {
+// ----------------- /myid (щоб дізнатися ADMIN_TG_ID) -----------------
+bot.command("myid", async (ctx) => {
+  await ctx.reply(`Ваш Telegram ID: ${ctx.from.id}`);
+});
+
+// ----------------- Callbacks (inline кнопки) -----------------
+bot.action("MENU_LATER", async (ctx) => {
+  await ctx.answerCbQuery();
+  state.delete(ctx.from.id);
+  await ctx.editMessageText("Добре 😊 Якщо захочете оформити рекламу — напишіть /start");
+});
+
+bot.action("MENU_CREATE", async (ctx) => {
+  await ctx.answerCbQuery();
+
+  state.set(ctx.from.id, { step: "tariff" });
+
+  await ctx.editMessageText(
+    "1/7 📆 Оберіть термін розміщення:",
+    tariffsKeyboard()
+  );
+});
+
+bot.action("BACK_TO_MENU", async (ctx) => {
+  await ctx.answerCbQuery();
+  state.delete(ctx.from.id);
+
+  const tariffsText = TARIFFS.map((t) => t.label).join("\n");
+  await ctx.editMessageText(
+    `👋 Вітаємо в DeTransport Ads!\n\n` +
+      `💰 Тарифи розміщення реклами:\n${tariffsText}\n\n` +
+      `Натисніть кнопку нижче 👇`,
+    mainMenuKeyboard()
+  );
+});
+
+async function chooseTariff(ctx, days) {
+  await ctx.answerCbQuery();
+
+  const t = getTariffByDays(days);
+  if (!t) return;
+
+  state.set(ctx.from.id, {
+    step: "title",
+    tariff_days: t.days,
+    price_uah: t.price,
+  });
+
+  await ctx.editMessageText(
+    `✅ Обрано: ${t.days} дн.\n` +
+      `💳 Вартість: ${t.price} грн\n\n` +
+      `2/7 ✍️ Напиши короткий заголовок (до ${LIMITS.title} символів).`
+  );
+}
+
+bot.action("TARIFF_1", (ctx) => chooseTariff(ctx, 1));
+bot.action("TARIFF_7", (ctx) => chooseTariff(ctx, 7));
+bot.action("TARIFF_14", (ctx) => chooseTariff(ctx, 14));
+bot.action("TARIFF_30", (ctx) => chooseTariff(ctx, 30));
+
+// ----------------- Text flow -----------------
+bot.on("text", async (ctx) => {
   try {
     const uid = ctx.from.id;
     const text = ctx.message.text.trim();
     const s = state.get(uid);
 
-    // Якщо користувач ще не почав
     if (!s) {
+      return ctx.reply("Щоб оформити рекламу, натисніть /start 🙂");
+    }
+
+    // 2/7 title
+    if (s.step === "title") {
       if (text.length > LIMITS.title) {
-        return ctx.reply(`❌ Заголовок занадто довгий. Спробуй коротше (до ${LIMITS.title} символів).`);
+        return ctx.reply(`❌ Заголовок занадто довгий. До ${LIMITS.title} символів.`);
       }
 
-      state.set(uid, { step: 'title', title: text });
-
-      return ctx.reply(`✅ 2/5 📝 Напиши короткий опис (1–2 речення, до ${LIMITS.desc} символів).`);
+      state.set(uid, { ...s, step: "desc", title: text });
+      return ctx.reply(`✅ 3/7 📝 Напиши короткий опис (1–2 речення, до ${LIMITS.desc} символів).`);
     }
 
-    // Крок 2 — опис
-    if (s.step === 'title') {
+    // 3/7 desc
+    if (s.step === "desc") {
       if (text.length > LIMITS.desc) {
-        return ctx.reply(`❌ Опис задовгий. Спробуй коротше (до ${LIMITS.desc} символів).`);
+        return ctx.reply(`❌ Опис задовгий. До ${LIMITS.desc} символів.`);
       }
 
-      state.set(uid, { ...s, step: 'desc', description: text });
-
-      return ctx.reply('✅ 3/5 🔗 Надішли посилання (URL), куди перейти при натисканні на рекламу.');
+      state.set(uid, { ...s, step: "link", description_adv: text });
+      return ctx.reply("✅ 4/7 🔗 Надішли посилання (URL), куди перейти при натисканні на рекламу.");
     }
 
-    // Крок 3 — посилання
-    if (s.step === 'desc') {
+    // 4/7 link
+    if (s.step === "link") {
       if (!isValidUrl(text)) {
-        return ctx.reply('❌ Це не схоже на посилання. Надішли URL (наприклад: https://instagram.com/...)');
+        return ctx.reply("❌ Це не схоже на посилання. Наприклад: https://instagram.com/...");
       }
 
-      state.set(uid, { ...s, step: 'link', link_url: text });
-
-      return ctx.reply(`✅ 4/5 ☎️ Залиш контакт (телефон / Instagram / Telegram, до ${LIMITS.contact} символів).`);
+      state.set(uid, { ...s, step: "contact", link_url: text });
+      return ctx.reply(`✅ 5/7 ☎️ Залиш контакт (телефон / Instagram / Telegram).`);
     }
 
-    // Крок 4 — контакт
-    if (s.step === 'link') {
+    // 5/7 contact
+    if (s.step === "contact") {
       if (text.length > LIMITS.contact) {
-        return ctx.reply(`❌ Контакт задовгий. Спробуй коротше (до ${LIMITS.contact} символів).`);
+        return ctx.reply(`❌ Контакт задовгий. До ${LIMITS.contact} символів.`);
       }
 
-      state.set(uid, { ...s, step: 'contact', contact_info: text });
-
-      return ctx.reply('✅ 5/5 🖼 Надішли фото/банер одним повідомленням.');
+      state.set(uid, { ...s, step: "name", contact_info: text });
+      return ctx.reply("✅ 6/7 👤 Вкажіть ім’я та по батькові (як у квитанції).");
     }
 
-    // Якщо користувач пише текст замість фото
-    if (s.step === 'contact') {
-      return ctx.reply('📸 Очікую фото/банер. Надішли зображення одним повідомленням 🙂');
+    // 6/7 name
+    if (s.step === "name") {
+      if (text.length > LIMITS.name) {
+        return ctx.reply(`❌ Занадто довго. До ${LIMITS.name} символів.`);
+      }
+
+      state.set(uid, { ...s, step: "photo", customer_name: text });
+      return ctx.reply("✅ 7/7 🖼 Надішли фото/банер одним повідомленням.");
     }
 
+    // якщо текст замість фото
+    if (s.step === "photo") {
+      return ctx.reply("📸 Очікую фото/банер. Надішли зображення одним повідомленням 🙂");
+    }
+
+    // якщо чекаємо квитанцію
+    if (s.step === "wait_receipt") {
+      return ctx.reply("🧾 Очікую квитанцію (скрін/фото) одним повідомленням ✅");
+    }
   } catch (e) {
-    console.error('bot text handler error:', e);
-    ctx.reply('На жаль, сталася помилка. Спробуйте ще раз пізніше 🙏');
+    console.error("bot text handler error:", e);
+    ctx.reply("На жаль, сталася помилка. Спробуйте ще раз пізніше 🙏");
   }
 });
 
-// Фото/файл — фінальний крок
-bot.on(['photo', 'document'], async ctx => {
+// ----------------- Photo or receipt -----------------
+bot.on(["photo", "document"], async (ctx) => {
   try {
     const uid = ctx.from.id;
     const s = state.get(uid);
 
-    // Якщо людина не проходила кроки — просимо почати
     if (!s) {
-      return ctx.reply('Щоб створити рекламу, напиши /start 🙂');
+      return ctx.reply("Щоб оформити рекламу, натисніть /start 🙂");
     }
 
-    // Файл
+    // fileId
     let fileId = null;
     if (ctx.message.photo) fileId = ctx.message.photo.at(-1).file_id;
     else if (ctx.message.document) fileId = ctx.message.document.file_id;
-
     if (!fileId) return;
 
     const file = await ctx.telegram.getFile(fileId);
-    const tgUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
+    const tgFileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
 
-    // ⚠️ Тут ми тільки готуємо дані.
-    // Запис у БД додамо після того, як ти створиш таблицю.
-    // (Тому зараз просто показуємо підтвердження)
+    // 7/7 — приймаємо банер і записуємо заявку в БД
+    if (s.step === "photo") {
+      const [result] = await pool.query(
+        `INSERT INTO ads_requests
+        (tg_id, name_user, customer_name, title, description_adv, link_url, contact_info,
+         media_type, media_url, tariff_days, price_uah, payment_status, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'photo', ?, ?, ?, 'unpaid', 'pending')`,
+        [
+          String(uid),
+          ctx.from.first_name || null,
+          s.customer_name || null,
+          s.title,
+          s.description_adv,
+          s.link_url,
+          s.contact_info,
+          tgFileUrl,
+          s.tariff_days,
+          s.price_uah,
+        ]
+      );
 
-    state.delete(uid);
+      const insertId = result.insertId;
 
-    return ctx.reply(
-      `🎉 Готово! Заявка прийнята ✅\n` +
-      `Після підтвердження та оплати реклама зʼявиться на сайті.\n\n` +
-      `📌 Дані:\n` +
-      `• Заголовок: ${s.title}\n` +
-      `• Опис: ${s.description}\n` +
-      `• Посилання: ${s.link_url}\n` +
-      `• Контакт: ${s.contact_info}\n` +
-      `• Фото: додано ✅`
-    );
+      // переводимо в очікування квитанції
+      state.set(uid, { step: "wait_receipt", last_request_id: insertId });
 
+      return ctx.reply(
+        `✅ Заявка №${insertId} прийнята!\n` +
+          `💰 До оплати: ${s.price_uah} грн\n\n` +
+          `💳 Картка: ${PAYMENT_DETAILS.card}\n` +
+          `🏦 IBAN: ${PAYMENT_DETAILS.iban}\n\n` +
+          `🧾 Призначення платежу:\n` +
+          `Реклама DeTransport + ${s.customer_name}\n\n` +
+          `Після оплати надішліть квитанцію (скрін/фото) сюди ✅`
+      );
+    }
+
+    // Очікуємо квитанцію
+    if (s.step === "wait_receipt") {
+      // збережемо квитанцію як payment_proof_url (якщо є колонка)
+      // Якщо колонки ще нема — просто можеш прибрати цей UPDATE
+      try {
+        await pool.query(
+          `UPDATE ads_requests
+           SET payment_proof_url = ?, payment_status = 'waiting_review'
+           WHERE id = ?`,
+          [tgFileUrl, s.last_request_id]
+        );
+      } catch (e) {
+        // якщо колонки payment_proof_url ще немає, просто ігноруємо
+        console.log("payment_proof_url column not found (ok for now)");
+      }
+
+      state.delete(uid);
+
+      return ctx.reply(
+        "✅ Квитанцію отримано!\n" +
+          "Очікуйте підтвердження ✅"
+      );
+    }
+
+    return ctx.reply("Напишіть /start щоб оформити рекламу 🙂");
   } catch (e) {
-    console.error('bot media handler error:', e);
-    ctx.reply('Не вдалося обробити файл. Спробуйте ще раз 🙏');
+    console.error("bot media handler error:", e);
+    ctx.reply("Не вдалося обробити файл. Спробуйте ще раз 🙏");
   }
 });
 
-// ---------------- WEBHOOK / POLLING ----------------
-if (PUBLIC_URL) {
-  // ✅ прибираємо перенос рядка і пробіли
-  const baseUrl = PUBLIC_URL.trim().replace(/\/$/, '');
+// ----------------- Admin commands -----------------
+bot.command("list_pending", async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.reply("⛔️ Немає доступу.");
 
-  const webhookPath = '/tg-webhook';
+  const [rows] = await pool.query(
+    `SELECT id, customer_name, title, price_uah, tariff_days, payment_status, status, created_at
+     FROM ads_requests
+     WHERE status='pending'
+     ORDER BY created_at DESC
+     LIMIT 20`
+  );
+
+  if (!rows.length) return ctx.reply("✅ Немає заявок pending.");
+
+  const msg = rows
+    .map(
+      (r) =>
+        `#${r.id} | ${r.customer_name || "-"}\n` +
+        `${r.title}\n` +
+        `💰 ${r.price_uah || "-"} грн | 📆 ${r.tariff_days || "-"} днів\n` +
+        `💳 ${r.payment_status} | 📌 ${r.status}\n`
+    )
+    .join("\n");
+
+  return ctx.reply(msg);
+});
+
+bot.command("approve", async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.reply("⛔️ Немає доступу.");
+
+  const parts = ctx.message.text.split(" ");
+  const id = Number(parts[1]);
+  if (!id) return ctx.reply("Формат: /approve 12");
+
+  // активуємо на сьогодні + tariff_days
+  await pool.query(
+    `UPDATE ads_requests
+     SET status='active',
+         payment_status='paid',
+         start_date = CURDATE(),
+         end_date = DATE_ADD(CURDATE(), INTERVAL tariff_days DAY)
+     WHERE id = ?`,
+    [id]
+  );
+
+  return ctx.reply(`✅ Заявку #${id} активовано (status=active, payment=paid).`);
+});
+
+bot.command("disable", async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.reply("⛔️ Немає доступу.");
+
+  const parts = ctx.message.text.split(" ");
+  const id = Number(parts[1]);
+  if (!id) return ctx.reply("Формат: /disable 12");
+
+  await pool.query(
+    `UPDATE ads_requests
+     SET status='disabled'
+     WHERE id = ?`,
+    [id]
+  );
+
+  return ctx.reply(`✅ Заявку #${id} вимкнено (status=disabled).`);
+});
+
+// ----------------- WEBHOOK / POLLING -----------------
+if (PUBLIC_URL) {
+  const baseUrl = PUBLIC_URL.trim().replace(/\/$/, "");
+  const webhookPath = "/tg-webhook";
   const webhookUrl = `${baseUrl}${webhookPath}`;
 
-  // приймаємо webhook
   app.use(bot.webhookCallback(webhookPath));
-
-  // ставимо webhook в Telegram
   await bot.telegram.setWebhook(webhookUrl);
 
   app.listen(PORT, () => {
-    console.log('HTTP server & webhook on', PORT);
-    console.log('Webhook URL:', webhookUrl);
+    console.log("HTTP server & webhook on", PORT);
+    console.log("Webhook URL:", webhookUrl);
   });
 } else {
-  // long polling локально
-  app.listen(PORT, () => console.log('HTTP server on', PORT));
-
+  app.listen(PORT, () => console.log("HTTP server on", PORT));
   await bot.telegram.deleteWebhook({ drop_pending_updates: true });
   await bot.launch();
-
-  console.log('Bot started via long polling');
+  console.log("Bot started via long polling");
 }
 
 // глобальні ловці
-process.on('unhandledRejection', err => console.error('unhandledRejection', err));
-process.on('uncaughtException', err => console.error('uncaughtException', err));
+process.on("unhandledRejection", (err) =>
+  console.error("unhandledRejection", err)
+);
+process.on("uncaughtException", (err) => console.error("uncaughtException", err));
 
-process.on('SIGINT', () => {
-  try { bot.stop('SIGINT'); } catch (e) {}
+process.on("SIGINT", () => {
+  try {
+    bot.stop("SIGINT");
+  } catch (e) {}
 });
 
-process.on('SIGTERM', () => {
-  try { bot.stop('SIGTERM'); } catch (e) {}
+process.on("SIGTERM", () => {
+  try {
+    bot.stop("SIGTERM");
+  } catch (e) {}
 });
