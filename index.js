@@ -12,7 +12,7 @@ const {
   MYSQL_DATABASE,
   PORT = 8080,
   PUBLIC_URL,
-  ADMIN_TG_ID = 1379949625, // <-- поставиш свій TG id, щоб адмін команди працювали
+  ADMIN_TG_ID =1379949625, // <-- поставиш свій TG id, щоб адмін команди працювали
 } = process.env;
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN відсутній (.env)");
