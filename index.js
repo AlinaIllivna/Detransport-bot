@@ -12,7 +12,7 @@ const {
   MYSQL_DATABASE,
   PORT = 8080,
   PUBLIC_URL,
-  ADMIN_TG_ID=1379949625, // <-- поставиш свій TG id, щоб адмін команди працювали
+  ADMIN_TG_ID = 1379949625, // <-- поставиш свій TG id, щоб адмін команди працювали
 } = process.env;
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN відсутній (.env)");
@@ -48,12 +48,12 @@ app.use(express.json());
 app.get("/api/ads", async (_req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT id, title, description_adv, media_url, link_url, contact_info, start_date, end_date, created_at
+      `SELECT id, title, description_adv, media_url, link_url, contact_info, start_date, end_date
        FROM ads_requests
        WHERE status='active'
          AND (start_date IS NULL OR start_date <= CURDATE())
          AND (end_date   IS NULL OR end_date   >= CURDATE())
-       ORDER BY created_at DESC
+       ORDER BY id DESC
        LIMIT 100`
     );
     res.json(rows);
@@ -104,8 +104,8 @@ function isAdmin(ctx) {
 
 function mainMenuKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("📝 Створити заявку", "MENU_CREATE")],
-    [Markup.button.callback("❌ Не зараз", "MENU_LATER")],
+    [Markup.button.callback("📝 Оформити рекламу", "MENU_CREATE")],
+    [Markup.button.callback("❌ Поки що ні", "MENU_LATER")],
   ]);
 }
 
@@ -143,7 +143,7 @@ bot.command("cancel", async (ctx) => {
   await ctx.reply("❌ Заявку скасовано. Напиши /start щоб почати заново.");
 });
 
-// ----------------- /myid (щоб дізнатися ADMIN_TG_ID) -----------------
+// ----------------- /myid -----------------
 bot.command("myid", async (ctx) => {
   await ctx.reply(`Ваш Telegram ID: ${ctx.from.id}`);
 });
@@ -152,7 +152,9 @@ bot.command("myid", async (ctx) => {
 bot.action("MENU_LATER", async (ctx) => {
   await ctx.answerCbQuery();
   state.delete(ctx.from.id);
-  await ctx.editMessageText("Добре 😊 Якщо захочете оформити рекламу — напишіть /start");
+  await ctx.editMessageText(
+    "Добре 😊 Якщо захочете оформити рекламу — напишіть /start"
+  );
 });
 
 bot.action("MENU_CREATE", async (ctx) => {
@@ -160,10 +162,7 @@ bot.action("MENU_CREATE", async (ctx) => {
 
   state.set(ctx.from.id, { step: "tariff" });
 
-  await ctx.editMessageText(
-    "1/7 📆 Оберіть термін розміщення:",
-    tariffsKeyboard()
-  );
+  await ctx.editMessageText("1/7 📆 Оберіть термін розміщення:", tariffsKeyboard());
 });
 
 bot.action("BACK_TO_MENU", async (ctx) => {
@@ -217,11 +216,15 @@ bot.on("text", async (ctx) => {
     // 2/7 title
     if (s.step === "title") {
       if (text.length > LIMITS.title) {
-        return ctx.reply(`❌ Заголовок занадто довгий. До ${LIMITS.title} символів.`);
+        return ctx.reply(
+          `❌ Заголовок занадто довгий. До ${LIMITS.title} символів.`
+        );
       }
 
       state.set(uid, { ...s, step: "desc", title: text });
-      return ctx.reply(`✅ 3/7 📝 Напиши короткий опис (1–2 речення, до ${LIMITS.desc} символів).`);
+      return ctx.reply(
+        `✅ 3/7 📝 Напиши короткий опис (1–2 речення, до ${LIMITS.desc} символів).`
+      );
     }
 
     // 3/7 desc
@@ -231,13 +234,17 @@ bot.on("text", async (ctx) => {
       }
 
       state.set(uid, { ...s, step: "link", description_adv: text });
-      return ctx.reply("✅ 4/7 🔗 Надішли посилання (URL), куди перейти при натисканні на рекламу.");
+      return ctx.reply(
+        "✅ 4/7 🔗 Надішли посилання (URL), куди перейти при натисканні на рекламу."
+      );
     }
 
     // 4/7 link
     if (s.step === "link") {
       if (!isValidUrl(text)) {
-        return ctx.reply("❌ Це не схоже на посилання. Наприклад: https://instagram.com/...");
+        return ctx.reply(
+          "❌ Це не схоже на посилання. Наприклад: https://instagram.com/..."
+        );
       }
 
       state.set(uid, { ...s, step: "contact", link_url: text });
@@ -303,8 +310,8 @@ bot.on(["photo", "document"], async (ctx) => {
       const [result] = await pool.query(
         `INSERT INTO ads_requests
         (tg_id, name_user, customer_name, title, description_adv, link_url, contact_info,
-         media_type, media_url, tariff_days, price_uah, payment_status, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'photo', ?, ?, ?, 'unpaid', 'pending')`,
+         media_url, tariff_days, price_uah, payment_status, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unpaid', 'pending')`,
         [
           String(uid),
           ctx.from.first_name || null,
@@ -337,19 +344,12 @@ bot.on(["photo", "document"], async (ctx) => {
 
     // Очікуємо квитанцію
     if (s.step === "wait_receipt") {
-      // збережемо квитанцію як payment_proof_url (якщо є колонка)
-      // Якщо колонки ще нема — просто можеш прибрати цей UPDATE
-      try {
-        await pool.query(
-          `UPDATE ads_requests
-           SET payment_proof_url = ?, payment_status = 'waiting_review'
-           WHERE id = ?`,
-          [tgFileUrl, s.last_request_id]
-        );
-      } catch (e) {
-        // якщо колонки payment_proof_url ще немає, просто ігноруємо
-        console.log("payment_proof_url column not found (ok for now)");
-      }
+      await pool.query(
+        `UPDATE ads_requests
+         SET payment_proof_url = ?, payment_status = 'waiting_review'
+         WHERE id = ?`,
+        [tgFileUrl, s.last_request_id]
+      );
 
       state.delete(uid);
 
@@ -371,10 +371,10 @@ bot.command("list_pending", async (ctx) => {
   if (!isAdmin(ctx)) return ctx.reply("⛔️ Немає доступу.");
 
   const [rows] = await pool.query(
-    `SELECT id, customer_name, title, price_uah, tariff_days, payment_status, status, created_at
+    `SELECT id, customer_name, title, price_uah, tariff_days, payment_status, status
      FROM ads_requests
      WHERE status='pending'
-     ORDER BY created_at DESC
+     ORDER BY id DESC
      LIMIT 20`
   );
 
@@ -400,7 +400,6 @@ bot.command("approve", async (ctx) => {
   const id = Number(parts[1]);
   if (!id) return ctx.reply("Формат: /approve 12");
 
-  // активуємо на сьогодні + tariff_days
   await pool.query(
     `UPDATE ads_requests
      SET status='active',
@@ -452,9 +451,7 @@ if (PUBLIC_URL) {
 }
 
 // глобальні ловці
-process.on("unhandledRejection", (err) =>
-  console.error("unhandledRejection", err)
-);
+process.on("unhandledRejection", (err) => console.error("unhandledRejection", err));
 process.on("uncaughtException", (err) => console.error("uncaughtException", err));
 
 process.on("SIGINT", () => {
