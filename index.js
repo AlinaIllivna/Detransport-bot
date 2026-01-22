@@ -5,8 +5,13 @@ import mysql from 'mysql2/promise';
 
 const {
   BOT_TOKEN,
-  MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE,
-  PORT = 8080, PUBLIC_URL
+  MYSQL_HOST,
+  MYSQL_PORT,
+  MYSQL_USER,
+  MYSQL_PASSWORD,
+  MYSQL_DATABASE,
+  PORT = 8080,
+  PUBLIC_URL
 } = process.env;
 
 if (!BOT_TOKEN) throw new Error('BOT_TOKEN відсутній (.env)');
@@ -64,7 +69,9 @@ const state = new Map();
 
 bot.start(ctx => {
   state.delete(ctx.from.id);
-  ctx.reply('👋 Вітаємо у DeTransport Ads!\nНапишіть, будь ласка, КОРОТКИЙ заголовок реклами (до 150 символів).');
+  ctx.reply(
+    '👋 Вітаємо у DeTransport Ads!\nНапишіть, будь ласка, КОРОТКИЙ заголовок реклами (до 150 символів).'
+  );
 });
 
 bot.on('text', async ctx => {
@@ -97,7 +104,9 @@ bot.on('text', async ctx => {
     if (s.step === 'contacts') {
       // крок 4: посилання (необовʼязково)
       let link = null;
-      if (text.toLowerCase() !== 'ні' && text.toLowerCase() !== 'ні.') {
+      const lower = text.toLowerCase();
+
+      if (lower !== 'ні' && lower !== 'ні.') {
         link = text;
       }
 
@@ -110,9 +119,11 @@ bot.on('text', async ctx => {
       );
 
       state.delete(uid);
-      return ctx.reply('✅ Заявку збережено! Можете надіслати фото/логотип одним повідомленням — я додам його до останньої заявки.\nАбо введіть /start, щоб створити нову заявку.');
-    }
 
+      return ctx.reply(
+        '✅ Заявку збережено! Можете надіслати фото/логотип одним повідомленням — я додам його до останньої заявки.\nАбо введіть /start, щоб створити нову заявку.'
+      );
+    }
   } catch (e) {
     console.error('bot text handler error:', e);
     ctx.reply('На жаль, сталася помилка. Спробуйте ще раз пізніше 🙏');
@@ -123,14 +134,15 @@ bot.on('text', async ctx => {
 bot.on(['photo', 'document'], async ctx => {
   try {
     const uid = ctx.from.id;
-    // беремо найбільше фото
+
     let fileId = null;
     if (ctx.message.photo) fileId = ctx.message.photo.at(-1).file_id;
     else if (ctx.message.document) fileId = ctx.message.document.file_id;
+
     if (!fileId) return;
 
     const file = await ctx.telegram.getFile(fileId);
-    const tgUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`;
+    const tgUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
 
     // оновлюємо останній запис цього користувача
     await pool.query(
@@ -154,15 +166,31 @@ bot.on(['photo', 'document'], async ctx => {
   }
 });
 
-// Запуск локально (long polling) — важливо скинути webhook, якщо бот колись працював десь ще
+// ---------------- WEBHOOK / POLLING ----------------
 if (PUBLIC_URL) {
-  app.use(bot.webhookCallback('/tg-webhook'));
-  await bot.telegram.setWebhook(`${PUBLIC_URL}/tg-webhook`);
-  app.listen(PORT, () => console.log('HTTP server & webhook on', PORT));
+  // ✅ прибираємо перенос рядка і пробіли
+  const baseUrl = PUBLIC_URL.trim().replace(/\/$/, '');
+
+  const webhookPath = '/tg-webhook';
+  const webhookUrl = `${baseUrl}${webhookPath}`;
+
+  // приймаємо webhook
+  app.use(bot.webhookCallback(webhookPath));
+
+  // ставимо webhook в Telegram
+  await bot.telegram.setWebhook(webhookUrl);
+
+  app.listen(PORT, () => {
+    console.log('HTTP server & webhook on', PORT);
+    console.log('Webhook URL:', webhookUrl);
+  });
 } else {
+  // long polling локально
   app.listen(PORT, () => console.log('HTTP server on', PORT));
+
   await bot.telegram.deleteWebhook({ drop_pending_updates: true });
   await bot.launch();
+
   console.log('Bot started via long polling');
 }
 
