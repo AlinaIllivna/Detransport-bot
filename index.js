@@ -198,5 +198,10 @@ if (PUBLIC_URL) {
 process.on('unhandledRejection', err => console.error('unhandledRejection', err));
 process.on('uncaughtException', err => console.error('uncaughtException', err));
 
-process.on('SIGINT', () => bot.stop('SIGINT'));
-process.on('SIGTERM', () => bot.stop('SIGTERM'));
+process.on('SIGINT', () => {
+  try { bot.stop('SIGINT'); } catch (e) {}
+});
+
+process.on('SIGTERM', () => {
+  try { bot.stop('SIGTERM'); } catch (e) {}
+});
