@@ -12,7 +12,7 @@ const {
   MYSQL_DATABASE,
   PORT = 8080,
   PUBLIC_URL,
-  ADMIN_TG_ID =1379949625, // <-- поставиш свій TG id, щоб адмін команди працювали
+  ADMIN_TG_ID , 
 } = process.env;
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN відсутній (.env)");
@@ -128,14 +128,28 @@ bot.start(async (ctx) => {
   state.delete(ctx.from.id);
 
   const tariffsText = TARIFFS.map((t) => t.label).join("\n");
+  const payload = ctx.startPayload;
 
-  await ctx.reply(
-    `👋 Вітаємо в DeTransport Ads!\n\n` +
-      `💰 Тарифи розміщення реклами:\n${tariffsText}\n\n` +
-      `Натисніть кнопку нижче 👇`,
-    mainMenuKeyboard()
-  );
+  if (payload === "order") {
+    await ctx.reply(
+      "📝 Почнемо оформлення реклами!\n\n" +
+      "💰 Тарифи розміщення:\n" +
+      `${tariffsText}\n\n` +
+      "Натисніть кнопку нижче 👇",
+      mainMenuKeyboard()
+    );
+  } else {
+    await ctx.reply(
+      "👋 Вітаємо в DeTransport Ads!\n\n" +
+      "💰 Тарифи розміщення реклами:\n" +
+      `${tariffsText}\n\n` +
+      "Натисніть кнопку нижче 👇",
+      mainMenuKeyboard()
+    );
+  }
 });
+
+
 
 // ----------------- /cancel -----------------
 bot.command("cancel", async (ctx) => {
