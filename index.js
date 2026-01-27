@@ -12,7 +12,7 @@ const {
   MYSQL_DATABASE,
   PORT = 8080,
   PUBLIC_URL,
-  ADMIN_TG_ID , 
+  ADMIN_TG_ID, 
 } = process.env;
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN відсутній (.env)");
@@ -151,6 +151,7 @@ bot.start(async (ctx) => {
 
 
 
+
 // ----------------- /cancel -----------------
 bot.command("cancel", async (ctx) => {
   state.delete(ctx.from.id);
@@ -218,6 +219,8 @@ bot.action("TARIFF_30", (ctx) => chooseTariff(ctx, 30));
 
 // ----------------- Text flow -----------------
 bot.on("text", async (ctx) => {
+  if (ctx.message.text.startsWith("/")) return;
+
   try {
     const uid = ctx.from.id;
     const text = ctx.message.text.trim();
