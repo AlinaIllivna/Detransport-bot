@@ -217,91 +217,7 @@ bot.action("TARIFF_7", (ctx) => chooseTariff(ctx, 7));
 bot.action("TARIFF_14", (ctx) => chooseTariff(ctx, 14));
 bot.action("TARIFF_30", (ctx) => chooseTariff(ctx, 30));
 
-// ----------------- Text flow -----------------
-bot.on("text", async (ctx) => {
-  if (ctx.message.text.startsWith("/")) return;
 
-  try {
-    const uid = ctx.from.id;
-    const text = ctx.message.text.trim();
-    const s = state.get(uid);
-
-    if (!s) {
-      return ctx.reply("Щоб оформити рекламу, натисніть /start 🙂");
-    }
-
-    // 2/7 title
-    if (s.step === "title") {
-      if (text.length > LIMITS.title) {
-        return ctx.reply(
-          `❌ Заголовок занадто довгий. До ${LIMITS.title} символів.`
-        );
-      }
-
-      state.set(uid, { ...s, step: "desc", title: text });
-      return ctx.reply(
-        `✅ 3/7 📝 Напиши короткий опис (1–2 речення, до ${LIMITS.desc} символів).`
-      );
-    }
-
-    // 3/7 desc
-    if (s.step === "desc") {
-      if (text.length > LIMITS.desc) {
-        return ctx.reply(`❌ Опис задовгий. До ${LIMITS.desc} символів.`);
-      }
-
-      state.set(uid, { ...s, step: "link", description_adv: text });
-      return ctx.reply(
-        "✅ 4/7 🔗 Надішли посилання (URL), куди перейти при натисканні на рекламу."
-      );
-    }
-
-    // 4/7 link
-    if (s.step === "link") {
-      if (!isValidUrl(text)) {
-        return ctx.reply(
-          "❌ Це не схоже на посилання. Наприклад: https://instagram.com/..."
-        );
-      }
-
-      state.set(uid, { ...s, step: "contact", link_url: text });
-      return ctx.reply(`✅ 5/7 ☎️ Залиш контакт (телефон / Instagram / Telegram).`);
-    }
-
-    // 5/7 contact
-    if (s.step === "contact") {
-      if (text.length > LIMITS.contact) {
-        return ctx.reply(`❌ Контакт задовгий. До ${LIMITS.contact} символів.`);
-      }
-
-      state.set(uid, { ...s, step: "name", contact_info: text });
-      return ctx.reply("✅ 6/7 👤 Вкажіть ім’я та по батькові (як у квитанції).");
-    }
-
-    // 6/7 name
-    if (s.step === "name") {
-      if (text.length > LIMITS.name) {
-        return ctx.reply(`❌ Занадто довго. До ${LIMITS.name} символів.`);
-      }
-
-      state.set(uid, { ...s, step: "photo", customer_name: text });
-      return ctx.reply("✅ 7/7 🖼 Надішли фото/банер одним повідомленням.");
-    }
-
-    // якщо текст замість фото
-    if (s.step === "photo") {
-      return ctx.reply("📸 Очікую фото/банер. Надішли зображення одним повідомленням 🙂");
-    }
-
-    // якщо чекаємо квитанцію
-    if (s.step === "wait_receipt") {
-      return ctx.reply("🧾 Очікую квитанцію (скрін/фото) одним повідомленням ✅");
-    }
-  } catch (e) {
-    console.error("bot text handler error:", e);
-    ctx.reply("На жаль, сталася помилка. Спробуйте ще раз пізніше 🙏");
-  }
-});
 
 // ----------------- Photo or receipt -----------------
 bot.on(["photo", "document"], async (ctx) => {
@@ -447,6 +363,92 @@ bot.command("disable", async (ctx) => {
   return ctx.reply(`✅ Заявку #${id} вимкнено (status=disabled).`);
 });
 
+
+// ----------------- Text flow -----------------
+bot.on("text", async (ctx) => {
+  if (ctx.message.text.startsWith("/")) return;
+
+  try {
+    const uid = ctx.from.id;
+    const text = ctx.message.text.trim();
+    const s = state.get(uid);
+
+    if (!s) {
+      return ctx.reply("Щоб оформити рекламу, натисніть /start 🙂");
+    }
+
+    // 2/7 title
+    if (s.step === "title") {
+      if (text.length > LIMITS.title) {
+        return ctx.reply(
+          `❌ Заголовок занадто довгий. До ${LIMITS.title} символів.`
+        );
+      }
+
+      state.set(uid, { ...s, step: "desc", title: text });
+      return ctx.reply(
+        `✅ 3/7 📝 Напиши короткий опис (1–2 речення, до ${LIMITS.desc} символів).`
+      );
+    }
+
+    // 3/7 desc
+    if (s.step === "desc") {
+      if (text.length > LIMITS.desc) {
+        return ctx.reply(`❌ Опис задовгий. До ${LIMITS.desc} символів.`);
+      }
+
+      state.set(uid, { ...s, step: "link", description_adv: text });
+      return ctx.reply(
+        "✅ 4/7 🔗 Надішли посилання (URL), куди перейти при натисканні на рекламу."
+      );
+    }
+
+    // 4/7 link
+    if (s.step === "link") {
+      if (!isValidUrl(text)) {
+        return ctx.reply(
+          "❌ Це не схоже на посилання. Наприклад: https://instagram.com/..."
+        );
+      }
+
+      state.set(uid, { ...s, step: "contact", link_url: text });
+      return ctx.reply(`✅ 5/7 ☎️ Залиш контакт (телефон / Instagram / Telegram).`);
+    }
+
+    // 5/7 contact
+    if (s.step === "contact") {
+      if (text.length > LIMITS.contact) {
+        return ctx.reply(`❌ Контакт задовгий. До ${LIMITS.contact} символів.`);
+      }
+
+      state.set(uid, { ...s, step: "name", contact_info: text });
+      return ctx.reply("✅ 6/7 👤 Вкажіть ім’я та по батькові (як у квитанції).");
+    }
+
+    // 6/7 name
+    if (s.step === "name") {
+      if (text.length > LIMITS.name) {
+        return ctx.reply(`❌ Занадто довго. До ${LIMITS.name} символів.`);
+      }
+
+      state.set(uid, { ...s, step: "photo", customer_name: text });
+      return ctx.reply("✅ 7/7 🖼 Надішли фото/банер одним повідомленням.");
+    }
+
+    // якщо текст замість фото
+    if (s.step === "photo") {
+      return ctx.reply("📸 Очікую фото/банер. Надішли зображення одним повідомленням 🙂");
+    }
+
+    // якщо чекаємо квитанцію
+    if (s.step === "wait_receipt") {
+      return ctx.reply("🧾 Очікую квитанцію (скрін/фото) одним повідомленням ✅");
+    }
+  } catch (e) {
+    console.error("bot text handler error:", e);
+    ctx.reply("На жаль, сталася помилка. Спробуйте ще раз пізніше 🙏");
+  }
+});
 // ----------------- WEBHOOK / POLLING -----------------
 if (PUBLIC_URL) {
   const baseUrl = PUBLIC_URL.trim().replace(/\/$/, "");
