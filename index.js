@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { Telegraf, Markup } from "telegraf";
 import mysql from "mysql2/promise";
+import cors from "cors";
 
 const {
   BOT_TOKEN,
@@ -42,6 +43,19 @@ try {
 
 // ----------------- Express -----------------
 const app = express();
+
+// ✅ CORS ПЕРШИМ
+app.use(
+  cors({
+    origin: [
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      "https://detransport.vercel.app",
+    ],
+    methods: ["GET", "POST"],
+  })
+);
+
 app.use(express.json());
 
 // API для сайту: віддати активні оголошення
@@ -56,12 +70,14 @@ app.get("/api/ads", async (_req, res) => {
        ORDER BY id DESC
        LIMIT 100`
     );
+
     res.json(rows);
   } catch (e) {
     console.error("GET /api/ads error:", e);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 // ----------------- Telegram bot -----------------
 const bot = new Telegraf(BOT_TOKEN);
