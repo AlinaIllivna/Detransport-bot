@@ -322,7 +322,7 @@ bot.on("channel_post", async (ctx) => {
     if (!text) return;
 
     await pool.query(
-      `INSERT INTO news (text, published_at)
+      `INSERT INTO new_block (text, published_at)
        VALUES (?, FROM_UNIXTIME(?))`,
       [
         text,
