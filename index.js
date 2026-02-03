@@ -44,7 +44,7 @@ try {
 // ----------------- Express -----------------
 const app = express();
 
-// ✅ CORS ПЕРШИМ
+// ✅ CORS 
 app.use(
   cors({
     origin: [
@@ -78,6 +78,22 @@ app.get("/api/ads", async (_req, res) => {
   }
 });
 
+// API для сайту: віддати новини транспорту
+app.get("/api/news", async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, text, published_at 
+       FROM news_block 
+       ORDER BY published_at DESC 
+       LIMIT 50`
+    );
+
+    res.json(rows);
+  } catch (e) {
+    console.error("GET /api/news error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
 
 // ----------------- Telegram bot -----------------
 const bot = new Telegraf(BOT_TOKEN);
