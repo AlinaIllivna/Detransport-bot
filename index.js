@@ -315,6 +315,29 @@ bot.on(["photo", "document"], async (ctx) => {
   }
 });
 
+// 📰 Ловимо пости з Telegram-каналу
+bot.on("channel_post", async (ctx) => {
+  try {
+    const text = ctx.channelPost.text;
+
+    if (!text) return; // ігноруємо пости без тексту
+
+    await db.execute(
+      `INSERT INTO news (text, published_at)
+       VALUES (?, FROM_UNIXTIME(?))`,
+      [
+        text,
+        ctx.channelPost.date, // timestamp від Telegram
+      ]
+    );
+
+    console.log("📰 News saved:", text.slice(0, 50));
+  } catch (err) {
+    console.error("❌ Error saving news:", err);
+  }
+});
+
+
 // ----------------- Admin commands -----------------
 bot.command("list_pending", async (ctx) => {
   if (!isAdmin(ctx)) return ctx.reply("⛔️ Немає доступу.");
