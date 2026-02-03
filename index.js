@@ -315,29 +315,7 @@ bot.on(["photo", "document"], async (ctx) => {
   }
 });
 
-// 🛠 Одноразова "латка" для бази даних
-const fixDatabaseStructure = async () => {
-  try {
-    // Просто додаємо AUTO_INCREMENT до вже існуючого ключа id
-    await pool.query(`
-      ALTER TABLE news_block 
-      MODIFY COLUMN id INT NOT NULL AUTO_INCREMENT
-    `);
-    
-    // Про всяк випадок налаштуємо і дату
-    await pool.query(`
-      ALTER TABLE news_block 
-      MODIFY COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    `);
-    
-    console.log("✅ Успіх! Тепер AUTO_INCREMENT увімкнено.");
-  } catch (err) {
-    console.log("ℹ️ Стан бази:", err.sqlMessage || err.message);
-  }
-};
 
-// Запускаємо перевірку/фікс
-fixDatabaseStructure();
 
 // 📰 Твій код (залишаємо як є)
 bot.on("channel_post", async (ctx) => {
