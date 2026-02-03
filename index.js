@@ -318,16 +318,21 @@ bot.on(["photo", "document"], async (ctx) => {
 // 🛠 Одноразова "латка" для бази даних
 const fixDatabaseStructure = async () => {
   try {
-    // Робимо id головним і вмикаємо автоінкремент
+    // Просто додаємо AUTO_INCREMENT до вже існуючого ключа id
     await pool.query(`
       ALTER TABLE news_block 
-      MODIFY COLUMN id INT AUTO_INCREMENT PRIMARY KEY,
+      MODIFY COLUMN id INT NOT NULL AUTO_INCREMENT
+    `);
+    
+    // Про всяк випадок налаштуємо і дату
+    await pool.query(`
+      ALTER TABLE news_block 
       MODIFY COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     `);
-    console.log("✅ База даних успішно оновлена! Тепер ID додаються автоматично.");
+    
+    console.log("✅ Успіх! Тепер AUTO_INCREMENT увімкнено.");
   } catch (err) {
-    // Якщо вже оновлено, воно просто напише про це
-    console.log("ℹ️ Перевірка бази: все вже налаштовано або:", err.message);
+    console.log("ℹ️ Стан бази:", err.sqlMessage || err.message);
   }
 };
 
