@@ -315,7 +315,26 @@ bot.on(["photo", "document"], async (ctx) => {
   }
 });
 
-// 📰 Ловимо пости з Telegram-каналу
+// 🛠 Одноразова "латка" для бази даних
+const fixDatabaseStructure = async () => {
+  try {
+    // Робимо id головним і вмикаємо автоінкремент
+    await pool.query(`
+      ALTER TABLE news_block 
+      MODIFY COLUMN id INT AUTO_INCREMENT PRIMARY KEY,
+      MODIFY COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    `);
+    console.log("✅ База даних успішно оновлена! Тепер ID додаються автоматично.");
+  } catch (err) {
+    // Якщо вже оновлено, воно просто напише про це
+    console.log("ℹ️ Перевірка бази: все вже налаштовано або:", err.message);
+  }
+};
+
+// Запускаємо перевірку/фікс
+fixDatabaseStructure();
+
+// 📰 Твій код (залишаємо як є)
 bot.on("channel_post", async (ctx) => {
   try {
     const text = ctx.channelPost.text;
@@ -324,10 +343,7 @@ bot.on("channel_post", async (ctx) => {
     await pool.query(
       `INSERT INTO news_block (text, published_at)
        VALUES (?, FROM_UNIXTIME(?))`,
-      [
-        text,
-        ctx.channelPost.date,
-      ]
+      [text, ctx.channelPost.date]
     );
 
     console.log("📰 News saved:", text.slice(0, 50));
@@ -335,7 +351,6 @@ bot.on("channel_post", async (ctx) => {
     console.error("❌ Error saving news:", err);
   }
 });
-
 
 
 // ----------------- Admin commands -----------------
