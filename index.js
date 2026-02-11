@@ -3,6 +3,14 @@ import express from "express";
 import { Telegraf, Markup } from "telegraf";
 import mysql from "mysql2/promise";
 import cors from "cors";
+import cloudinary from "cloudinary";
+
+cloudinary.v2.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
 
 const {
   BOT_TOKEN,
@@ -95,8 +103,28 @@ app.get("/api/news", async (_req, res) => {
   }
 });
 
+
+
+
+
+
 // ----------------- Telegram bot -----------------
 const bot = new Telegraf(BOT_TOKEN);
+
+// функцію завантаження зображення
+async function uploadToCloudinaryFromTelegram(fileId) {
+const file = await bot.telegram.getFile(fileId);
+const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
+
+
+const result = await cloudinary.v2.uploader.upload(fileUrl, {
+folder: "ads",
+transformation: [{ quality: "auto", fetch_format: "auto" }],
+});
+
+
+return result.secure_url;
+}
 
 // Тарифи
 const TARIFFS = [
@@ -253,82 +281,78 @@ bot.action("TARIFF_30", (ctx) => chooseTariff(ctx, 30));
 
 // ----------------- Photo or receipt -----------------
 bot.on(["photo", "document"], async (ctx) => {
-  try {
-    const uid = ctx.from.id;
-    const s = state.get(uid);
+try {
+const uid = ctx.from.id;
+const s = state.get(uid);
 
-    if (!s) {
-      return ctx.reply("Щоб оформити рекламу, натисніть /start 🙂");
-    }
 
-    // fileId
-    let fileId = null;
-    if (ctx.message.photo) fileId = ctx.message.photo.at(-1).file_id;
-    else if (ctx.message.document) fileId = ctx.message.document.file_id;
-    if (!fileId) return;
+if (!s) return ctx.reply("Щоб оформити рекламу, натисніть /start 🙂");
 
-    const file = await ctx.telegram.getFile(fileId);
-    const tgFileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
 
-    // 7/7 — приймаємо банер і записуємо заявку в БД
-    if (s.step === "photo") {
-      const [result] = await pool.query(
-        `INSERT INTO ads_requests
-        (tg_id, name_user, customer_name, title, description_adv, link_url, contact_info,
-         media_url, tariff_days, price_uah, payment_status, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unpaid', 'pending')`,
-        [
-          String(uid),
-          ctx.from.first_name || null,
-          s.customer_name || null,
-          s.title,
-          s.description_adv,
-          s.link_url,
-          s.contact_info,
-          tgFileUrl,
-          s.tariff_days,
-          s.price_uah,
-        ]
-      );
+let fileId = null;
+if (ctx.message.photo) fileId = ctx.message.photo.at(-1).file_id;
+else if (ctx.message.document) fileId = ctx.message.document.file_id;
+if (!fileId) return;
 
-      const insertId = result.insertId;
 
-      // переводимо в очікування квитанції
-      state.set(uid, { step: "wait_receipt", last_request_id: insertId });
+const cloudUrl = await uploadToCloudinaryFromTelegram(fileId);
+if (!cloudUrl) return ctx.reply("❌ Помилка завантаження зображення. Спробуйте ще раз.");
 
-      return ctx.reply(
-        `✅ Заявка №${insertId} прийнята!\n` +
-          `💰 До оплати: ${s.price_uah} грн\n\n` +
-          `💳 Картка: ${PAYMENT_DETAILS.card}\n` +
-          `🏦 IBAN: ${PAYMENT_DETAILS.iban}\n\n` +
-          `🧾 Призначення платежу:\n` +
-          `Реклама DeTransport + ${s.customer_name}\n\n` +
-          `Після оплати надішліть квитанцію (скрін/фото) сюди ✅`
-      );
-    }
 
-    // Очікуємо квитанцію
-    if (s.step === "wait_receipt") {
-      await pool.query(
-        `UPDATE ads_requests
-         SET payment_proof_url = ?, payment_status = 'waiting_review'
-         WHERE id = ?`,
-        [tgFileUrl, s.last_request_id]
-      );
+if (s.step === "photo") {
+const [result] = await pool.query(
+`INSERT INTO ads_requests
+(tg_id, name_user, customer_name, title, description_adv, link_url, contact_info,
+media_url, tariff_days, price_uah, payment_status, status)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unpaid', 'pending')`,
+[
+String(uid),
+ctx.from.first_name || null,
+s.customer_name || null,
+s.title,
+s.description_adv,
+s.link_url,
+s.contact_info,
+cloudUrl,
+s.tariff_days,
+s.price_uah,
+]
+);
 
-      state.delete(uid);
 
-      return ctx.reply(
-        "✅ Квитанцію отримано!\n" +
-          "Очікуйте підтвердження ✅"
-      );
-    }
+const insertId = result.insertId;
+state.set(uid, { step: "wait_receipt", last_request_id: insertId });
 
-    return ctx.reply("Напишіть /start щоб оформити рекламу 🙂");
-  } catch (e) {
-    console.error("bot media handler error:", e);
-    ctx.reply("Не вдалося обробити файл. Спробуйте ще раз 🙏");
-  }
+
+return ctx.reply(
+`✅ Заявка №${insertId} прийнята!\n` +
+`💰 До оплати: ${s.price_uah} грн\n\n` +
+`💳 Картка: ${PAYMENT_DETAILS.card}\n` +
+`🏦 IBAN: ${PAYMENT_DETAILS.iban}\n\n` +
+`🧾 Призначення платежу:\n` +
+`Реклама DeTransport + ${s.customer_name}\n\n` +
+`Після оплати надішліть квитанцію (скрін/фото) сюди ✅`
+);
+}
+
+
+if (s.step === "wait_receipt") {
+await pool.query(
+`UPDATE ads_requests SET payment_proof_url = ?, payment_status = 'waiting_review' WHERE id = ?`,
+[cloudUrl, s.last_request_id]
+);
+
+
+state.delete(uid);
+return ctx.reply("✅ Квитанцію отримано!\nОчікуйте підтвердження ✅");
+}
+
+
+return ctx.reply("Напишіть /start щоб оформити рекламу 🙂");
+} catch (e) {
+console.error("bot media handler error:", e);
+ctx.reply("Не вдалося обробити файл. Спробуйте ще раз 🙏");
+}
 });
 
 
